@@ -272,9 +272,18 @@ class NwgcONTCore {
             // record the signal folder inference source
             yaml['ontBamFolders'] = [settings['bamPass']['source'],settings['bamFail']['source']]
 
-            // FIXME: message to pass to Samplify?
-            // yaml['rabbitHost']
-            // yaml['registration_url']
+            // message to pass to Samplify?
+            // we remove the update message as individual runs do not keep metric
+            if (yaml.containsKey('rabbitHost')) {
+                if (!(yaml['rabbitHost'].equals(''))) {
+                    yaml['rabbitHost'] = ''
+                }
+            }
+            if (yaml.containsKey('registration_url')) {
+                if (!(yaml['registration_url'].equals(''))) {
+                    yaml['registration_url'] = ''
+                }
+            }
 
             // localize results
             yaml['sampleDirectory'] = "${ontDataFolder}/${runAcqID}".toString()
@@ -631,8 +640,20 @@ class NwgcONTCore {
             // No better with overwriting as it must tally with the 'merge' anyway!
 
             // FIXME: message to pass to Samplify?
-            // yaml['rabbitHost']
-            // yaml['registration_url']
+            // message to pass to Samplify?
+            // pass-thru as release should let Samplify pick up new metrics
+            /*
+            if (yaml.containsKey('rabbitHost')) {
+                if (!(yaml['rabbitHost'].equals(''))) {
+                    yaml['rabbitHost'] = ''
+                }
+            }
+            if (yaml.containsKey('registration_url')) {
+                if (!(yaml['registration_url'].equals(''))) {
+                    yaml['registration_url'] = ''
+                }
+            }
+            */
 
             // inform user : autogen; will be overwritten
             writer.writeLine "##########################################"
