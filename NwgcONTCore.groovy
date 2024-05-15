@@ -25,7 +25,14 @@ class NwgcONTCore {
     final private static String BASECALL_R10_SUP_MODEL = 'dna_r10.4.1_e8.2_400bps_sup@v3.5.2'
     final private static String RELEASE_SUP_FOLDER = 'merge-qc_sup'
     final private static String RELEASE_LIVEMODEL_FOLDER = 'map-merge-qc_livemodel'
-    
+    final private static String ONT_BACKEND_USERID = 'cheehong'
+    final private static String ONT_BACKEND_USEREMAIL = 'cheehong@uw.edu'
+    final private static Map FlowCellModels = [
+        'FLO-PRO002@4000': ['supmodel': 'dna_r9.4.1_e8_sup@v3.3', 'modifications': '5mCG'], 
+        'FLO-PRO114M@4000': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v3.5.2', 'modifications': '5mCG'],
+        'FLO-PRO114M@5000': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v4.2.0', 'modifications': '5mCG_5hmCG'],
+        '': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v3.5.2', 'modifications': '5mCG']
+        ]
 
     NwgcONTCore() {}
 
@@ -149,6 +156,8 @@ class NwgcONTCore {
                     writer.writeLine "#\$ -o ${ontDataFolder}/${runAcqID}/logs/"
                 } else if (line.startsWith("#\$ -e ")) { // update stderr folder
                     writer.writeLine "#\$ -e ${ontDataFolder}/${runAcqID}/logs/"
+                } else if (line.startsWith("#\$ -M ")) { // update notification email
+                    writer.writeLine "#\$ -M ${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
                 }
@@ -177,6 +186,8 @@ class NwgcONTCore {
                 } else if (line.startsWith("JOB_NAME=")) { // for nextflow framework
                     //writer.writeLine "${line}_${runAcqID}_${totalSetup}"
                     writer.writeLine "JOB_NAME=basecall_${sampleId}_${runAcqID}"
+                } else if (line.startsWith("USER_EMAIL=")) { // for nextflow framework
+                    writer.writeLine "USER_EMAIL=${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
                 }
@@ -222,50 +233,63 @@ class NwgcONTCore {
             yaml['ontBaseCall'] = true // to perform basecalling only
             yaml['signalExtensions'] = settings['signalExtension'] // signal file extension
             yaml['ontBaseCallOutFolder'] = derivativeFile.parent // folder to write the basecall results
-            yaml['ontSignalFolders'] = [settings['signalPass']['source'],settings['signalFail']['source']] // folder(s) of signal files
+            // yaml['ontSignalFolders'] = [settings['signalPass']['source'],settings['signalFail']['source']] // folder(s) of signal files
+            yaml['ontSignalFolders'] = []
+            if (null!=log) { log.info("setupSUPBasecallParamsYAML: yaml['ontSignalFolders'] = ${yaml['ontSignalFolders']}") }
+            if (settings.containsKey('signalPass')) {
+                yaml['ontSignalFolders'].add(settings['signalPass']['source'])
+                if (null!=log) { log.info("setupSUPBasecallParamsYAML: add signalPass, yaml['ontSignalFolders'] = ${yaml['ontSignalFolders']}") }
+            }
+            if (settings.containsKey('signalFail')) {
+                yaml['ontSignalFolders'].add(settings['signalFail']['source'])
+                if (null!=log) { log.info("setupSUPBasecallParamsYAML: add signalFail, yaml['ontSignalFolders'] = ${yaml['ontSignalFolders']}") }
+            }
 
             // FIXME: the default model and mod can change with time / project
             // FIXME: the default model and mod are tied to caller
             if (yaml.containsKey('ontBaseCallModel')) {
                 // FIXME: what we do if different?
-                if (settings.runacq.FlowCellProductCode.equals('FLO-PRO002')) {
-                    if (yaml['ontBaseCallModel'].equals(BASECALL_R9_SUP_MODEL)) {
-                        log.warn("Specified basecall model '${yaml.ontBaseCallModel}' differs from expected '${BASECALL_R9_SUP_MODEL}'")
+                //if (FlowCellModels.containsKey(settings.runacq.FlowCellProductCode)) {
+                    String value = FlowCellModels[settings.runacq.FlowCellProductCode]['supmodel'];
+                    if (!yaml['ontBaseCallModel'].equals(value)) {
+                        log.warn("Specified basecall model '${yaml.ontBaseCallModel}' differs from expected '${value}'")
                         log.warn("NOT overriding; effective basecall model = '${yaml.ontBaseCallModel}'")
                     }
-                } else if (settings.runacq.FlowCellProductCode.equals('FLO-PRO114M')) {
-                    if (yaml['ontBaseCallModel'].equals(BASECALL_R10_SUP_MODEL)) {
-                        log.warn("Specified basecall model '${yaml.ontBaseCallModel}' differs from expected '${BASECALL_R10_SUP_MODEL}'")
-                        log.warn("NOT overriding; effective basecall model = '${yaml.ontBaseCallModel}'")
-                    }
-                } else {
-                    // FIXME: to review when we have switched over to R10!
-                    // default to R9 if we cannot find the flow cell product cdoe
-                    if (yaml['ontBaseCallModel'].equals(BASECALL_R9_SUP_MODEL)) {
-                        log.warn("Specified basecall model '${yaml.ontBaseCallModel}' differs from expected '${BASECALL_R9_SUP_MODEL}'")
-                        log.warn("NOT overriding; effective basecall model = '${yaml.ontBaseCallModel}'")
-                    }
-                }
+                //} else {
+                //    log.warn("Specified basecall model '${yaml.ontBaseCallModel}' for unknown flow cell product '${settings.runacq.FlowCellProductCode}'")
+                //}
             } else {
                 // FIXME: use external text file look up configuration!
-                if (settings.runacq.FlowCellProductCode.equals('FLO-PRO002')) {
-                    yaml['ontBaseCallModel'] = BASECALL_R9_SUP_MODEL
-                } else if (settings.runacq.FlowCellProductCode.equals('FLO-PRO114M')) {
-                    yaml['ontBaseCallModel'] = BASECALL_R10_SUP_MODEL
-                } else {
-                    // FIXME: to review when we have switched over to R10!
-                    // default to R9 if we cannot find the flow cell product cdoe
-                    yaml['ontBaseCallModel'] = BASECALL_R9_SUP_MODEL
-                }
+                //if (FlowCellModels.containsKey("${settings.runacq.FlowCellProductCode}")) {
+                    String value = FlowCellModels[settings.runacq.FlowCellProductCode]['supmodel'];
+                    yaml['ontBaseCallModel'] = value
+                    log.warn("No basecall model specified. Using ${value} per '${settings.runacq.FlowCellProductCode}'")
+                //} else {
+                //    String value = FlowCellModels['']['supmodel'];
+                //    yaml['ontBaseCallModel'] = value
+                //    log.warn("No basecall model specified. Using ${value} per default '${settings.runacq.FlowCellProductCode}'. ${FlowCellModels}")
+                //    value = FlowCellModels[settings.runacq.FlowCellProductCode]['supmodel'];
+                //    log.warn("DEBUG ${value}")
+                //}
             }
 
             if (yaml.containsKey('ontBaseCallBaseModifications')) {
-                if (!yaml['ontBaseCallBaseModifications'].equals(DORADO_BASE_MODIFICATIONS)) {
-                    log.warn("Specified base modificaitions '${yaml.ontBaseCallBaseModifications}' differs from expected '${DORADO_BASE_MODIFICATIONS}'")
-                    log.warn("NOT overriding; effective base modificaitions = '${yaml.ontBaseCallBaseModifications}'")
-                }
+                //if (FlowCellModels.containsKey(settings.runacq.FlowCellProductCode)) {
+                    String value = FlowCellModels[settings.runacq.FlowCellProductCode]['modifications'];
+                    if (!yaml['ontBaseCallModel'].equals(value)) {
+                        log.warn("Specified base modifications '${yaml.ontBaseCallBaseModifications}' differs from expected '${value}'")
+                        log.warn("NOT overriding; effective basecall model = '${yaml.ontBaseCallBaseModifications}'")
+                    }
+                //} else {
+                //    log.warn("Specified base modifications '${yaml.ontBaseCallBaseModifications}' for unknown flow cell product '${settings.runacq.FlowCellProductCode}'")
+                //}
             } else {
-                yaml['ontBaseCallBaseModifications'] = DORADO_BASE_MODIFICATIONS
+                String value = FlowCellModels[settings.runacq.FlowCellProductCode]['modifications'];
+                yaml['ontBaseCallBaseModifications'] = value
+                log.warn("No basecall model specified. Using ${value} per '${settings.runacq.FlowCellProductCode}'")
+                //String value = FlowCellModels['']['modifications'];
+                //yaml['ontBaseCallBaseModifications'] = value
+                //log.warn("No basecall model specified. Using ${value} per default.")
             }
 
 
@@ -288,6 +312,11 @@ class NwgcONTCore {
             // localize results
             yaml['sampleDirectory'] = "${ontDataFolder}/${runAcqID}".toString()
             yaml['sampleQCDirectory'] = "${ontDataFolder}/${runAcqID}/qc".toString()
+
+            // FIXME: set from params
+            //        prevent spamming user
+            yaml['userId'] = ONT_BACKEND_USERID
+            yaml['userEmail'] = ONT_BACKEND_USEREMAIL
 
             // inform user : autogen; will be overwritten
             writer.writeLine "##########################################"
@@ -315,47 +344,80 @@ class NwgcONTCore {
 
     private static getFlowcellProductCode(runAcquisitionPath) {
         String productCode = ''
+        String sampleRate = 4000
         File folder = new File(runAcquisitionPath)
         if (folder.exists()) {
+
             boolean found = false
+            boolean foundSR = false
             for (item in folder.listFiles()) {
                 if (item.isFile()) {
-                    if (item.name.startsWith('report_') && item.name.endsWith('.md')) {
-                        //    "flow_cell_product_code": "FLO-PRO114M", 
-                        Pattern pattern = Pattern.compile("\s*\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\s*");
+                    if (item.name.startsWith('report_') && item.name.endsWith('.json')) {
+                        // "product_code":"FLO-PRO114M"
+                        // "sample_rate":5000
+                        Pattern patternPC = Pattern.compile(/"product_code":"([^"]*)"/);
+                        Pattern patternSR = Pattern.compile(/"sample_rate":(\d+)/);
+                        //def regexPC = /"product_code":"([^"]*)"/;
+                        //def regexSR = /"sample_rate":(\d+)/;
                         File file = new File(item.toString())
                         def line
                         file.withReader { reader ->
                             while ((line = reader.readLine()) != null) {
-                                Matcher matcher = pattern.matcher(line);
+                                Matcher matcher = patternPC.matcher(line);
                                 if (matcher.find()) {
-                                    if (matcher.group(1).equalsIgnoreCase('flow_cell_product_code')) {
-                                        productCode = matcher.group(2)
-                                        found = true
-                                        break
+                                    productCode = matcher.group(1)
+                                    found = true
+                                }
+                                matcher = patternSR.matcher(line);
+                                if (matcher.find()) {
+                                    sampleRate = matcher.group(1)
+                                    foundSR = true
+                                }
+                                if (found && foundSR) {
+                                    break;
+                                }
+                            }
+                        }
+                    } else if (item.name.startsWith('report_') && item.name.endsWith('.md')) {
+                        //    "flow_cell_product_code": "FLO-PRO114M", 
+                        if (!found) {
+                            Pattern pattern = Pattern.compile("\s*\"([^\"]+)\"\s*:\s*\"([^\"]+)\"\s*");
+                            File file = new File(item.toString())
+                            def line
+                            file.withReader { reader ->
+                                while ((line = reader.readLine()) != null) {
+                                    Matcher matcher = pattern.matcher(line);
+                                    if (matcher.find()) {
+                                        if (matcher.group(1).equalsIgnoreCase('flow_cell_product_code')) {
+                                            productCode = matcher.group(2)
+                                            found = true
+                                            break
+                                        }
                                     }
                                 }
                             }
                         }
                     } else if (item.name.startsWith('final_summary_') && item.name.endsWith('.txt')) {
                         //protocol=sequencing/sequencing_PRO114_DNA_e8_2_400T:FLO-PRO114M:SQK-LSK114:400
-                        def protocolPrefix = 'protocol='
-                        File file = new File(item.toString())
-                        def line
-                        file.withReader { reader ->
-                            while ((line = reader.readLine()) != null) {
-                                if (line.startsWith(protocolPrefix)) {
-                                    def keyValue = line.split('=', 2)
-                                    def bits = keyValue[1].split(/:/)
-                                    productCode = bits[1]
-                                    found = true
-                                    break;
+                        if (!found) {
+                            def protocolPrefix = 'protocol='
+                            File file = new File(item.toString())
+                            def line
+                            file.withReader { reader ->
+                                while ((line = reader.readLine()) != null) {
+                                    if (line.startsWith(protocolPrefix)) {
+                                        def keyValue = line.split('=', 2)
+                                        def bits = keyValue[1].split(/:/)
+                                        productCode = bits[1]
+                                        found = true
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
                     if (null!=log) { log.info("getFlowcellProductCode: Product code ${productCode} in ${item.name}? ${found}") }
-                    if (found) {
+                    if (found && foundSR) {
                         break
                     }
                 }
@@ -372,7 +434,7 @@ class NwgcONTCore {
                 log.warn("getFlowcellProductCode : Please check the path ${runAcquisitionPath.toString()}")
             }
         }
-        return productCode
+        return "${productCode}@${sampleRate}"
     }
 
     public static Map setupRunAcquisition(runAcquisitionPath, runAcqBamFolders, sampleId, ontDataFolder, ontSubmitBaseCallJob=true) {
@@ -394,35 +456,85 @@ class NwgcONTCore {
         File folder = new File(runAcquisitionPath)
         String runAcqID = folder.name
         results['runAcqID'] = runAcqID
+        results['basecall'] = ['newsetup' : 0, 'totalsetup' : 0]  // initialize for early termination
 
         results['runacq'] = ['source': runAcquisitionPath, 'workdir': getONTWorkspaceFolder(ontDataFolder, runAcqID, "")]
         results['runacq']['FlowCellProductCode'] = getFlowcellProductCode(runAcquisitionPath)
         if (log!=null) { log.info("Flowcell Product Code '${results.runacq.FlowCellProductCode}'") }
+        if ("" == results['runacq']['FlowCellProductCode']) {
+            if (log!=null) { log.info("Skipping run workspace setup for ${runAcqID}; Flowcell Product Code unavailable.") }
+            return results
+        }
 
         String signalExtension = SIGNAL_FAST5_EXT
+        def unifiedPod5Present = false
+        def unifiedPod5PassPresent = false
+        def unifiedPod5SkipPresent = false
         def pod5Present = false
+        def pod5PassPresent = false
+        def pod5FailPresent = false
         def fast5Present = false
+        def fast5PassPresent = false
+        def fast5FailPresent = false
         folder.eachDir{item ->
-            if (item.name == "pod5_pass" || item.name == "pod5_fail") {
-                pod5Present = true
+            if (item.name == "pod5") {
+                unifiedPod5Present = true
+                unifiedPod5PassPresent = true
                 signalExtension = SIGNAL_POD5_EXT
-            } else if (item.name == "fast5_pass" || item.name == "fast5_fail") {
+            } else if (item.name == "pod5_skip") {
+                unifiedPod5Present = true
+                unifiedPod5SkipPresent = true
+                signalExtension = SIGNAL_POD5_EXT
+            } else if (item.name == "pod5_pass") {
+                pod5Present = true
+                pod5PassPresent = true
+                signalExtension = SIGNAL_POD5_EXT
+            } else if (item.name == "pod5_fail") {
+                pod5Present = true
+                pod5FailPresent = true
+                signalExtension = SIGNAL_POD5_EXT
+            } else if (item.name == "fast5_pass") {
                 fast5Present = true
+                fast5PassPresent = true
+                signalExtension = SIGNAL_FAST5_EXT
+            } else if ( item.name == "fast5_fail") {
+                fast5Present = true
+                fast5FailPresent = true
                 signalExtension = SIGNAL_FAST5_EXT
             }
         }
         results['signalExtension'] = signalExtension
 
-        if (pod5Present) {
-            results['signalPass'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5_pass")]
-            results['signalPass']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5_pass")
-            results['signalFail'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5_fail")]
-            results['signalFail']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5_fail")
+        if (unifiedPod5Present) {
+            assert (unifiedPod5PassPresent || unifiedPod5SkipPresent) : "Missing pod5 or pod5_skip signal folder."
+            if (unifiedPod5PassPresent) {
+                results['signalPass'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5"), 'unified': true]
+                results['signalPass']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5")
+            }
+            if (unifiedPod5SkipPresent) {
+                results['signalFail'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5_skip"), 'unified': true]
+                results['signalFail']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5_skip")
+            }
+        } else if (pod5Present) {
+            assert (pod5PassPresent || pod5FailPresent) : "Missing pod5_pass or pod5_fail signal folder."
+            if (pod5PassPresent) {
+                results['signalPass'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5_pass")]
+                results['signalPass']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5_pass")
+            }
+            if (pod5FailPresent) {
+                results['signalFail'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "pod5_fail")]
+                results['signalFail']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "pod5_fail")
+            }
         } else if (fast5Present) {
-            results['signalPass'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "fast5_pass")]
-            results['signalPass']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "fast5_pass")
-            results['signalFail'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "fast5_fail")]
-            results['signalFail']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "fast5_fail")
+            assert (fast5PassPresent || fast5FailPresent) : "Missing fast5_pass or fast5_fail signal folder."
+            if (fast5PassPresent) {
+                results['signalPass'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "fast5_pass")]
+                results['signalPass']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "fast5_pass")
+            }
+            if (fast5FailPresent) {
+                results['signalFail'] = ['source': getONTInstrumentFolder(runAcquisitionPath, "fast5_fail")]
+                results['signalFail']['workdir'] = getONTWorkspaceFolder(ontDataFolder, runAcqID, "fast5_fail")
+            }
         }
 
         results['finalPassBam'] = getRunAcquisitionMappedBamFile(ontDataFolder, runAcqID, sampleId, true)
@@ -443,22 +555,54 @@ class NwgcONTCore {
         def newSetup = 0
         def sessionSetups = [:]
         // keep the (hardlinked) copy of signalFolders
-        if (pod5Present || fast5Present) {
-            sessionSetups['signalPass'] = setupDataInFolder(results.signalPass.source, results.signalPass.workdir)
-            newSetup += sessionSetups['signalPass']['setup']
-            totalSetup += sessionSetups['signalPass']['total']
-            sessionSetups['signalFail'] = setupDataInFolder(results.signalFail.source, results.signalFail.workdir)
-            newSetup += sessionSetups['signalFail']['setup']
-            totalSetup += sessionSetups['signalFail']['total']
+        if (unifiedPod5Present) {
+            if (unifiedPod5PassPresent) {
+                sessionSetups['signalPass'] = setupDataInFolder(results.signalPass.source, results.signalPass.workdir)
+                newSetup += sessionSetups['signalPass']['setup']
+                totalSetup += sessionSetups['signalPass']['total']
+            }
+            if (unifiedPod5SkipPresent) {
+                sessionSetups['signalFail'] = setupDataInFolder(results.signalFail.source, results.signalFail.workdir)
+                newSetup += sessionSetups['signalFail']['setup']
+                totalSetup += sessionSetups['signalFail']['total']
+            }
+        } else if (pod5Present) {
+            if (pod5PassPresent) {
+                sessionSetups['signalPass'] = setupDataInFolder(results.signalPass.source, results.signalPass.workdir)
+                newSetup += sessionSetups['signalPass']['setup']
+                totalSetup += sessionSetups['signalPass']['total']
+            }
+            if (pod5FailPresent) {
+                sessionSetups['signalFail'] = setupDataInFolder(results.signalFail.source, results.signalFail.workdir)
+                newSetup += sessionSetups['signalFail']['setup']
+                totalSetup += sessionSetups['signalFail']['total']
+            }
+        } else if (fast5Present) {
+            if (fast5PassPresent) {
+                sessionSetups['signalPass'] = setupDataInFolder(results.signalPass.source, results.signalPass.workdir)
+                newSetup += sessionSetups['signalPass']['setup']
+                totalSetup += sessionSetups['signalPass']['total']
+            }
+            if (fast5FailPresent) {
+                sessionSetups['signalFail'] = setupDataInFolder(results.signalFail.source, results.signalFail.workdir)
+                newSetup += sessionSetups['signalFail']['setup']
+                totalSetup += sessionSetups['signalFail']['total']
+            }
         }
         
         // keep the (hardlinked) copy of bamFolders
-        sessionSetups['bamPass'] = setupDataInFolder(results.bamPass.source, results.bamPass.workdir)
-        sessionSetups['bamFail'] = setupDataInFolder(results.bamFail.source, results.bamFail.workdir)
+        File workDir = new File("${results.bamPass.source}")
+        if (workDir.exists()) {
+            sessionSetups['bamPass'] = setupDataInFolder(results.bamPass.source, results.bamPass.workdir)
+        }
+        workDir = new File("${results.bamFail.source}")
+        if (workDir.exists()) {
+            sessionSetups['bamFail'] = setupDataInFolder(results.bamFail.source, results.bamFail.workdir)
+        }
 
         // set up bash script and config
         def basecallScript = getONTWorkspaceFolder(ontDataFolder, runAcqID, BASECALL_BASH_SCRIPT)
-        results['basecall'] = ['script' : basecallScript]
+        results['basecall']['script'] = basecallScript;
 
         def paramFileFPN = getParamFile(wfMeta.launchDir, wfMeta.commandLine)
         File paramFileUsed = new File(paramFileFPN)
@@ -504,6 +648,7 @@ class NwgcONTCore {
             // FIXME: submit basecalling job to cluster
             //        more appropriate to be done externally
             //        Question: how is local execution supported?
+            //defaultClusterOptions = "-S /bin/bash -P $clusterProject -m as -r yes -R yes";
             def proc = "qsub -S /bin/bash -P dna -m as -r yes -R yes -terse ${basecallScript}".execute()
             proc.waitFor()
             def jobid = proc.in.text
@@ -563,6 +708,8 @@ class NwgcONTCore {
                     writer.writeLine "#\$ -o ${ontDataFolder}/${RELEASE_SUP_FOLDER}/logs/"
                 } else if (line.startsWith("#\$ -e ")) { // update stderr folder
                     writer.writeLine "#\$ -e ${ontDataFolder}/${RELEASE_SUP_FOLDER}/logs/"
+                } else if (line.startsWith("#\$ -M ")) { // update notification email
+                    writer.writeLine "#\$ -M ${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
                 }
@@ -591,6 +738,8 @@ class NwgcONTCore {
                 } else if (line.startsWith("JOB_NAME=")) { // for nextflow framework
                     //writer.writeLine "${line}_${RELEASE_SUP_FOLDER}"
                     writer.writeLine "JOB_NAME=s${sampleId}_${RELEASE_SUP_FOLDER}"
+                } else if (line.startsWith("USER_EMAIL=")) { // for nextflow framework
+                    writer.writeLine "USER_EMAIL=${ONT_BACKEND_USEREMAIL}"
                 } else if (line.startsWith("module load ") && -1!=line.indexOf("modules-init")) {
                     writer.writeLine "${line}"
                     writer.writeLine "module load samtools/1.17"
@@ -639,21 +788,14 @@ class NwgcONTCore {
             // let 'ontBamFolders' pass-thru ;
             // No better with overwriting as it must tally with the 'merge' anyway!
 
-            // FIXME: message to pass to Samplify?
             // message to pass to Samplify?
             // pass-thru as release should let Samplify pick up new metrics
-            /*
-            if (yaml.containsKey('rabbitHost')) {
-                if (!(yaml['rabbitHost'].equals(''))) {
-                    yaml['rabbitHost'] = ''
-                }
-            }
-            if (yaml.containsKey('registration_url')) {
-                if (!(yaml['registration_url'].equals(''))) {
-                    yaml['registration_url'] = ''
-                }
-            }
-            */
+
+            // FIXME: set from params
+            //        prevent spamming user
+            yaml['userId'] = ONT_BACKEND_USERID
+            yaml['userEmail'] = ONT_BACKEND_USEREMAIL
+
 
             // inform user : autogen; will be overwritten
             writer.writeLine "##########################################"
@@ -739,8 +881,6 @@ class NwgcONTCore {
             }
         }
 
-
-
         // release should NOT be done if there is no signal file!
         boolean toSetup = false
         if (totalSetup>0) {
@@ -754,7 +894,6 @@ class NwgcONTCore {
                 }
             }
         }
-
 
         if (newSetup>0 || toSetup) {
             setupReleaseDataBashScript(
