@@ -434,7 +434,11 @@ class NwgcONTCore {
                 log.warn("getFlowcellProductCode : Please check the path ${runAcquisitionPath.toString()}")
             }
         }
-        return "${productCode}@${sampleRate}"
+        if (productCode.equals('')) {
+            return ""
+        } else {
+            return "${productCode}@${sampleRate}"
+        }
     }
 
     public static Map setupRunAcquisition(runAcquisitionPath, runAcqBamFolders, sampleId, ontDataFolder, ontSubmitBaseCallJob=true) {
