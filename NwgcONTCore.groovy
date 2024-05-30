@@ -33,7 +33,8 @@ class NwgcONTCore {
         'FLO-PRO114M@5000': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v4.2.0', 'modifications': '5mCG_5hmCG'],
         '': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v3.5.2', 'modifications': '5mCG']
         ]
-    final private static String BASECALL_MQ_HOST = 'burnet.gs.washington.edu'
+    // use internal compute subnet reference
+    final private static String BASECALL_MQ_HOST = 'burnet'
     final private static int BASECALL_MQ_PORT = 5671
     final private static String BASECALL_MQ_VHOST = 'ont'
     final private static String BASECALL_MQ_EXCHANGE = ''
