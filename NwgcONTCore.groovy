@@ -33,6 +33,11 @@ class NwgcONTCore {
         'FLO-PRO114M@5000': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v4.2.0', 'modifications': '5mCG_5hmCG'],
         '': ['supmodel': 'dna_r10.4.1_e8.2_400bps_sup@v3.5.2', 'modifications': '5mCG']
         ]
+    final private static String BASECALL_MQ_HOST = 'burnet.gs.washington.edu'
+    final private static int BASECALL_MQ_PORT = 5671
+    final private static String BASECALL_MQ_VHOST = 'ont'
+    final private static String BASECALL_MQ_EXCHANGE = ''
+    final private static String BASECALL_MQ_ROUTE_KEY = 'OntSupRebaseCalling'
 
     NwgcONTCore() {}
 
@@ -40,7 +45,12 @@ class NwgcONTCore {
     public static setWorkflowMetadata(existingWFMeta) { wfMeta = existingWFMeta }
 
     public static String getONTDataFolder(params) {
-        return params.ontDataFolder ?: "${params.sampleDirectory}/../ont"
+        if (params.ontDataFolder) {
+            return params.ontDataFolder
+        } else {
+            String parent = new File(params.sampleDirectory).parent
+            return new File("${parent}/ont").toString()
+        }
     }
 
     private static getONTFolder(runAcqFolder, subFolder) {
@@ -137,7 +147,7 @@ class NwgcONTCore {
 
     // write a new bash job wrapper for the basecalling task
     // (base off the trigger from merge action generated bash job wrapper)
-    private static setupBasecallBashScript(template, derivative, sampleId, ontDataFolder, runAcqID, totalSetup, yamlFile) {
+    private static setupBasecallBashScript(template, derivative, sampleId, ontDataFolder, runAcqID, totalSetup, yamlFile, runMeta, backendEmailReroute=false) {
         File templateFile = new File(template)
         assert templateFile.exists() : "Source script missing! ${template}"
         File derivativeFile = new File(derivative)
@@ -156,7 +166,7 @@ class NwgcONTCore {
                     writer.writeLine "#\$ -o ${ontDataFolder}/${runAcqID}/logs/"
                 } else if (line.startsWith("#\$ -e ")) { // update stderr folder
                     writer.writeLine "#\$ -e ${ontDataFolder}/${runAcqID}/logs/"
-                } else if (line.startsWith("#\$ -M ")) { // update notification email
+                } else if (line.startsWith("#\$ -M ") && backendEmailReroute) { // update notification email
                     writer.writeLine "#\$ -M ${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
@@ -186,13 +196,23 @@ class NwgcONTCore {
                 } else if (line.startsWith("JOB_NAME=")) { // for nextflow framework
                     //writer.writeLine "${line}_${runAcqID}_${totalSetup}"
                     writer.writeLine "JOB_NAME=basecall_${sampleId}_${runAcqID}"
-                } else if (line.startsWith("USER_EMAIL=")) { // for nextflow framework
+                } else if (line.startsWith("USER_EMAIL=") && backendEmailReroute) { // for nextflow framework
                     writer.writeLine "USER_EMAIL=${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
                 }
             }
         }
+        // publish to rabbitMQ
+        writer.writeLine "exitcode=\$?"
+        writer.writeLine "# publish to message queue"
+        writer.writeLine "amqps_publish ${BASECALL_MQ_HOST} ${BASECALL_MQ_PORT} ${BASECALL_MQ_VHOST} '${BASECALL_MQ_EXCHANGE}' ${BASECALL_MQ_ROUTE_KEY} \"sampleId: \\\"${sampleId}\\\""
+        writer.writeLine "protocolGroupId: \\\"${runMeta.protocolGroupId}\\\""
+        writer.writeLine "flowCellPosition: \\\"${runMeta.flowCellPosition}\\\""
+        writer.writeLine "flowCellId: \\\"${runMeta.flowCellId}\\\""
+        writer.writeLine "protocolRunIdShort: \\\"${runMeta.protocolRunIdShort}\\\""
+        writer.writeLine "supBam: \\\"${runMeta.supBam}\\\""
+        writer.writeLine "exitCode: \${exitcode}\""
         writer.flush()
         writer.close()
 
@@ -201,7 +221,7 @@ class NwgcONTCore {
 
     // write a new YAML parameters for the basecalling task
     // (base off the trigger from merge action generated YAML parameters)
-    private static setupSUPBasecallParamsYAML(template, derivative, ontDataFolder, runAcqID, settings) {
+    private static setupSUPBasecallParamsYAML(template, derivative, ontDataFolder, runAcqID, settings, backendEmailReroute=false) {
 
         File templateFile = new File(template)
         assert templateFile.exists() : "Parameters file missing! ${template}"
@@ -221,6 +241,16 @@ class NwgcONTCore {
             if (yaml.containsKey('ontSetupBasecall')) {
                 if (yaml['ontSetupBasecall']) {
                     yaml.remove('ontSetupBasecall')
+                }
+            }
+            if (yaml.containsKey('ontRebasecall')) {
+                if (yaml['ontRebasecall']) {
+                    yaml.remove('ontRebasecall')
+                }
+            }
+            if (yaml.containsKey('ontSubmitBaseCallJob')) {
+                if (yaml['ontSubmitBaseCallJob']) {
+                    yaml.remove('ontSubmitBaseCallJob')
                 }
             }
 
@@ -315,8 +345,10 @@ class NwgcONTCore {
 
             // FIXME: set from params
             //        prevent spamming user
-            yaml['userId'] = ONT_BACKEND_USERID
-            yaml['userEmail'] = ONT_BACKEND_USEREMAIL
+            if (backendEmailReroute) {
+                yaml['userId'] = ONT_BACKEND_USERID
+                yaml['userEmail'] = ONT_BACKEND_USEREMAIL
+            }
 
             // inform user : autogen; will be overwritten
             writer.writeLine "##########################################"
@@ -441,7 +473,21 @@ class NwgcONTCore {
         }
     }
 
-    public static Map setupRunAcquisition(runAcquisitionPath, runAcqBamFolders, sampleId, ontDataFolder, ontSubmitBaseCallJob=true) {
+    private static getRunAcquisitionMeta(runAcquisitionPath) {
+        File folder = new File(runAcquisitionPath)
+        String[] folders = runAcquisitionPath.split("/");
+        String runAcqID = folder.name
+        String[] bits = runAcqID.split("_");
+        def meta = [
+            'protocolGroupId': folders[-3],
+            'flowCellPosition': bits[2],
+            'flowCellId': bits[3],
+            'protocolRunIdShort': bits[4]
+            ]
+        return meta
+    }
+
+    public static Map setupRunAcquisition(runAcquisitionPath, runAcqBamFolders, sampleId, ontDataFolder, ontSubmitBaseCallJob=true, backendEmailReroute=false) {
         /*
             set up the folder if not existing
             set up the subfolder for pod5_{pass,fail} hardlink if exists, else fast5_{pass,fail}
@@ -616,6 +662,10 @@ class NwgcONTCore {
         results['basecall']['newsetup'] = newSetup
         results['basecall']['totalsetup'] = totalSetup
 
+        results['runMeta'] = getRunAcquisitionMeta(runAcquisitionPath)
+        results['runMeta']['sampleId'] = sampleId
+        results['runMeta']['supBam'] = results['finalPassBam']
+
         // FIXME: [low risk] need to write directory, dorado-version, model , mod
 
         // newly setup file(s), force re-processing
@@ -639,13 +689,15 @@ class NwgcONTCore {
         }
 
         if (newSetup>0 || 0==totalSetup) {
+            // results['bamPass']['source'] results['bamFail']['source']
+
             setupBasecallBashScript(
                 "${wfMeta.launchDir}/${PARENT_BASH_SCRIPT}", 
-                basecallScript, sampleId, ontDataFolder, runAcqID, totalSetup, paramFileUsed.getName())
+                basecallScript, sampleId, ontDataFolder, runAcqID, totalSetup, paramFileUsed.getName(), results['runMeta'], backendEmailReroute)
 
             setupSUPBasecallParamsYAML(
                 paramFileFPN, 
-                basecallParamFile, ontDataFolder, runAcqID, results)
+                basecallParamFile, ontDataFolder, runAcqID, results, backendEmailReroute)
         }
 
         if (ontSubmitBaseCallJob) {
@@ -660,7 +712,7 @@ class NwgcONTCore {
             if (log!=null) { log.info("HPC assigned job id ${jobid} to ${basecallScript}") }
         } else {
             results['basecall']['jobid'] = 0
-            if (log!=null) { 
+            if (log!=null) {
                 log.info("${basecallScript} has not been submitted.")
                 log.info("You may submit the job script manually later.")
             }
@@ -693,7 +745,7 @@ class NwgcONTCore {
 
     // write a new bash job wrapper for the re-release task
     // (base off the trigger from "release" action generated bash job wrapper)
-    private static setupReleaseDataBashScript(template, derivative, sampleId, ontDataFolder, totalSetup, yamlFile) {
+    private static setupReleaseDataBashScript(template, derivative, sampleId, ontDataFolder, totalSetup, yamlFile, backendEmailReroute=false) {
         File templateFile = new File(template)
         assert templateFile.exists() : "Source script missing! ${template}"
         File derivativeFile = new File(derivative)
@@ -712,7 +764,7 @@ class NwgcONTCore {
                     writer.writeLine "#\$ -o ${ontDataFolder}/${RELEASE_SUP_FOLDER}/logs/"
                 } else if (line.startsWith("#\$ -e ")) { // update stderr folder
                     writer.writeLine "#\$ -e ${ontDataFolder}/${RELEASE_SUP_FOLDER}/logs/"
-                } else if (line.startsWith("#\$ -M ")) { // update notification email
+                } else if (line.startsWith("#\$ -M ") && backendEmailReroute) { // update notification email
                     writer.writeLine "#\$ -M ${ONT_BACKEND_USEREMAIL}"
                 } else { // pass-thru
                     writer.writeLine "${line}"
@@ -741,8 +793,10 @@ class NwgcONTCore {
                     writer.writeLine "PIPELINE_YAML=${yamlFile}"
                 } else if (line.startsWith("JOB_NAME=")) { // for nextflow framework
                     //writer.writeLine "${line}_${RELEASE_SUP_FOLDER}"
-                    writer.writeLine "JOB_NAME=s${sampleId}_${RELEASE_SUP_FOLDER}"
-                } else if (line.startsWith("USER_EMAIL=")) { // for nextflow framework
+                    String[] bits = line.split('_')
+                    String suffix = bits[-1]
+                    writer.writeLine "JOB_NAME=s${sampleId}_${RELEASE_SUP_FOLDER}_${suffix}"
+                } else if (line.startsWith("USER_EMAIL=") && backendEmailReroute) { // for nextflow framework
                     writer.writeLine "USER_EMAIL=${ONT_BACKEND_USEREMAIL}"
                 } else if (line.startsWith("module load ") && -1!=line.indexOf("modules-init")) {
                     writer.writeLine "${line}"
@@ -760,7 +814,7 @@ class NwgcONTCore {
 
     // write a new YAML parameters for the re-release task
     // (base off the trigger from "release" action generated YAML parameters)
-    private static setupSUPReleaseDataParamsYAML(template, derivative, settings) {
+    private static setupSUPReleaseDataParamsYAML(template, derivative, settings, backendEmailReroute=false) {
 
         File templateFile = new File(template)
         assert templateFile.exists() : "Parameters file missing! ${template}"
@@ -785,6 +839,16 @@ class NwgcONTCore {
                     yaml.remove('ontSetupBasecall')
                 }
             }
+            if (yaml.containsKey('ontRebasecall')) {
+                if (yaml['ontRebasecall']) {
+                    yaml.remove('ontRebasecall')
+                }
+            }
+            if (yaml.containsKey('ontSubmitBaseCallJob')) {
+                if (yaml['ontSubmitBaseCallJob']) {
+                    yaml.remove('ontSubmitBaseCallJob')
+                }
+            }
 
             // ontDataFolder may need a default (for older files)
             // if one isn't available, workflow will have defaulted
@@ -797,8 +861,10 @@ class NwgcONTCore {
 
             // FIXME: set from params
             //        prevent spamming user
-            yaml['userId'] = ONT_BACKEND_USERID
-            yaml['userEmail'] = ONT_BACKEND_USEREMAIL
+            if (backendEmailReroute) {
+                yaml['userId'] = ONT_BACKEND_USERID
+                yaml['userEmail'] = ONT_BACKEND_USEREMAIL
+            }
 
 
             // inform user : autogen; will be overwritten
@@ -825,7 +891,7 @@ class NwgcONTCore {
         if (log!=null) { log.info("Setup release bash param-file ${template} --> ${derivativeFile}") }
     }
 
-    public static Map setupRelease(runAcquisitionsList, sampleId, ontDataFolder, outPrefix) {
+    public static Map setupRelease(runAcquisitionsList, sampleId, ontDataFolder, outPrefix, backendEmailReroute=false) {
         /*
             set up the folder if not existing
             set up the subfolder for <ontDataFolder>/release_sup
@@ -902,11 +968,11 @@ class NwgcONTCore {
         if (newSetup>0 || toSetup) {
             setupReleaseDataBashScript(
                 "${wfMeta.launchDir}/${PARENT_BASH_SCRIPT}", 
-                releaseScript, sampleId, ontDataFolder, totalSetup, paramFileUsed.getName())
+                releaseScript, sampleId, ontDataFolder, totalSetup, paramFileUsed.getName(), backendEmailReroute)
 
             setupSUPReleaseDataParamsYAML(
                 paramFileFPN, 
-                releaseParamFile, runAcquisitionsList)
+                releaseParamFile, runAcquisitionsList, backendEmailReroute)
 
             // NOTE: do not auto-submit; to be triggered by user
         }
