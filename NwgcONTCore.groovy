@@ -36,7 +36,7 @@ class NwgcONTCore {
     // use internal compute subnet reference
     final private static String BASECALL_MQ_HOST = 'burnet'
     final private static int BASECALL_MQ_PORT = 5671
-    final private static String BASECALL_MQ_VHOST = 'ont'
+    final private static String BASECALL_MQ_VHOST = 'nextflow'
     final private static String BASECALL_MQ_EXCHANGE = ''
     final private static String BASECALL_MQ_ROUTE_KEY = 'OntSupRebaseCalling'
 
